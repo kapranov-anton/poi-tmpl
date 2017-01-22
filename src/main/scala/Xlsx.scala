@@ -13,23 +13,11 @@ import kaa.poi.model.{
 , Table
 , Row
 , Cell
+, Replacer
 }
 import org.apache.poi.ss.util.CellRangeAddress
 
-object Replace {
-  val reg = "\\$\\{[^\\}]+\\}".r
-  def unwrap(s: String) = s.stripPrefix("${").stripSuffix("}")
-
-  def replaceText(cell: XSSFCell, dict: ReplacementDict) {
-    val result = reg.replaceAllIn(cell.toString, _ match { case Match(s) =>
-      dict(unwrap(s)) match {
-        case Text(s) => s
-        case _ => "" // never reached
-      }
-    })
-    cell.setCellValue(result)
-  }
-
+object Replace extends Replacer {
   def copyRowStyles(srcRow: XSSFRow, dstRow: XSSFRow) {
     dstRow.setRowStyle(srcRow.getRowStyle)
     dstRow.setHeight(srcRow.getHeight)
@@ -91,41 +79,23 @@ object Replace {
       for {
         (Row(tRow), tRowIndex) <- tableRows.zipWithIndex
         (Cell(tCell), tCellIndex) <- tRow.zipWithIndex
-      } yield {
-        sheet
+      } sheet
           .getRow(tRowIndex + sampleRowIndex)
           .getCell(tCellIndex + cellIndex)
           .setCellValue(tCell)
-      }
     }
   }
 
   def apply(fileName: String, dict: ReplacementDict) = {
-    val pkg = OPCPackage.open(new FileInputStream(fileName));
-    val wb = new XSSFWorkbook(pkg);
-    val cells = for {
+    val pkg = OPCPackage.open(new FileInputStream(fileName))
+    val wb = new XSSFWorkbook(pkg)
+    for {
       sheet <- wb.sheetIterator.toList
       row <- sheet.rowIterator.toList
       cell <- row.cellIterator.toList.asInstanceOf[List[XSSFCell]]
-    } yield {
-      val optRows = reg.findAllIn(cell.toString).flatMap { m =>
-        dict(unwrap(m)) match {
-          case Table(t) => List(t)
-          case _ => List()
-        }
-      }.toList.headOption
-
-      if (optRows.isDefined) {
-        val table = optRows.get
-        copyRows(cell, table)
-      } else {
-        replaceText(cell, dict)
-      }
-      /*
-      result.foreach { m =>
-        println()
-      }
-      */
+    } findTable(cell.toString, dict) match {
+      case Some(table) => copyRows(cell, table)
+      case None => cell.setCellValue(replaceText(cell.toString, dict))
     }
 
     val os = new ByteArrayOutputStream()
